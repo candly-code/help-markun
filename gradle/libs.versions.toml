@@ -1,3 +1,8 @@
+# 注意：ここのバージョンは「compileSdk 36」でビルドできる組み合わせに固定しています。
+# Android Studio が「新しいバージョンがあります」と勧めても上げないでください。
+# 例）core-ktx 1.19・lifecycle 2.11・material3 1.5.0-alpha29 などの新しい版は SDK 37 が必要になり、
+#     「requires ... compile against version 37」エラーでビルドできなくなります。
+# アプリ自体は Android 7.0（minSdk 24）以上で動きます。
 [versions]
 agp = "9.3.3"
 coreKtx = "1.16.0"

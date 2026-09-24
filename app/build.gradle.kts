@@ -56,6 +56,10 @@ android {
         compose = true
         buildConfig = true
     }
+    lint {
+        // SDK 36 で使える版に固定しているので、Android Studio の「新しい版に上げる」提案を出さない
+        disable += setOf("GradleDependency", "NewerVersionAvailable", "AndroidGradlePluginVersion")
+    }
 }
 
 dependencies {
