@@ -62,7 +62,7 @@ export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"
 ./gradlew :app:installDebug     # 開発用の版
 ```
 
-Windows の PowerShell では `.gradlew.bat :app:installRelease` です。
+Windows の PowerShell では `.\gradlew.bat :app:installRelease` です。
 
 ## データの登録
 
