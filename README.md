@@ -9,25 +9,60 @@ Jetpack Compose と Material 3 Expressive で作っています（ライト／�
 
 ## 必要なもの
 
-- Android Studio（JDK 同梱のもの）
-- Android 7.0（API 24）以上の端末。BLE と NFC を使う機能は実機が必要です
-- Supabase のプロジェクト
+- [Android Studio](https://developer.android.com/studio)（JDK も同梱されています）
+- Android 7.0（API 24）以上の端末と USB ケーブル。BLE と NFC を使うので、エミュレーターではなく実機が必要です
+- [Supabase](https://supabase.com) のプロジェクト（無料プランで動きます）
 
 ## セットアップ
 
-1. Supabase の SQL Editor で [`supabase/schema.sql`](supabase/schema.sql) を実行し、`help_profiles` テーブルを作ります。
-2. プロジェクト直下の `local.properties` に接続情報を書きます（このファイルは Git に含めません）。
+### 1. データベースを用意する
 
-   ```properties
-   supabase.url=https://xxxx.supabase.co
-   supabase.anonKey=eyJ...
-   ```
+Supabase の **SQL Editor** で [`supabase/schema.sql`](supabase/schema.sql) の中身を貼り付けて実行します。`help_profiles` テーブルと、サンプルの 1 人分のデータができます。
 
-3. 端末をつないでインストールします。
+### 2. Android Studio でプロジェクトを開く
 
-   ```bash
-   ./gradlew :app:installRelease
-   ```
+1. このリポジトリをクローン（またはZIPでダウンロードして展開）します。
+2. Android Studio の **File → Open** でフォルダを開きます。
+3. 初回は Gradle の同期が始まります。**Android SDK 36** が入っていない場合はインストールを求められるので、案内に従ってください。
+
+開くとプロジェクト直下に `local.properties` が自動で作られます（中に SDK の場所 `sdk.dir=...` が書かれます）。
+
+### 3. Supabase の接続情報を書く
+
+`local.properties` に次の 2 行を**追記**します（`sdk.dir` の行は消さないでください）。このファイルは Git に含まれません。
+
+```properties
+supabase.url=https://xxxx.supabase.co
+supabase.anonKey=eyJ...
+```
+
+- `supabase.url`：Supabase の **Project Settings → Data API** にある Project URL
+- `supabase.anonKey`：**Project Settings → API Keys** の「Legacy API keys」にある **anon public** キー（`eyJ` で始まる長い文字列）
+
+書き換えたら、Android Studio の **File → Sync Project with Gradle Files** を実行します。
+
+### 4. スマホで起動する
+
+1. スマホの **開発者向けオプション → USB デバッグ** をオンにして、パソコンにつなぎます（スマホに出る確認は「許可」）。
+2. Android Studio 上部の端末一覧で自分のスマホを選び、**▶（Run）** を押します。
+
+起動したら「近くのヘルプ」で **スキャンを開始** を押し、Bluetooth・位置情報・通知を許可してください。
+
+#### コマンドラインから入れる場合
+
+`JAVA_HOME` に Android Studio 同梱の JDK を指定してから実行します（未設定だと「Please set the JAVA_HOME variable」と出て止まります）。
+
+```bash
+# macOS
+export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+# Windows（Git Bash）
+export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"
+
+./gradlew :app:installRelease   # 軽量化した版（約 1.2MB）
+./gradlew :app:installDebug     # 開発用の版
+```
+
+Windows の PowerShell では `.gradlew.bat :app:installRelease` です。
 
 ## データの登録
 
