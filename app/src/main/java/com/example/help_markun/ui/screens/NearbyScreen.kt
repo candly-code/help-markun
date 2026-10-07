@@ -64,6 +64,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.NearMe
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.automirrored.rounded.BluetoothSearching
 import androidx.compose.material.icons.rounded.Bluetooth
@@ -93,7 +94,8 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 
-import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.SheetValue
+import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -102,6 +104,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import kotlinx.coroutines.delay
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.drawOutline
@@ -112,7 +116,9 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -125,6 +131,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.isSpecified
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import kotlin.math.hypot
 import com.example.help_markun.data.HelpProfile
 import com.example.help_markun.hardware.BleScanner
 import com.example.help_markun.ui.NearbyDevice
@@ -132,6 +146,8 @@ import com.example.help_markun.ui.NearbyState
 import com.example.help_markun.ui.components.AppLogo
 import com.example.help_markun.ui.components.ExpressiveRadar
 import com.example.help_markun.ui.components.HelpMarkLogo
+import com.example.help_markun.ui.components.AccountButton
+import com.example.help_markun.ui.components.FinderDialog
 import com.example.help_markun.ui.components.ProfileDetails
 import com.example.help_markun.ui.components.ProfileHeader
 import com.example.help_markun.ui.components.RadarMode
@@ -179,6 +195,8 @@ fun NearbyScreen(
 ) {
     var localMessage by remember { mutableStateOf<String?>(null) }
     var openProfile by remember { mutableStateOf<HelpProfile?>(null) }
+    // 「近づいて探す」画面を開いている方
+    var finding by remember { mutableStateOf<HelpProfile?>(null) }
     // 通知から開いた時などは、その方の詳細を真っ先に表示する
     LaunchedEffect(focusProfile) {
         if (focusProfile != null) {
@@ -209,7 +227,7 @@ fun NearbyScreen(
             if (isBluetoothEnabled()) onStart()
             else enableBt.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
         } else {
-            localMessage = "近くのデバイスを探すには、Bluetooth と位置情報の許可が必要です"
+            localMessage = "Bluetooth と位置情報の許可が必要です"
         }
     }
 
@@ -248,7 +266,8 @@ fun NearbyScreen(
         message.contains("Bluetooth") && !message.contains("対応していません") -> "オンにする" to {
             enableBt.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
         }
-        !message.contains("未設定") && (message.contains("Supabase") || message.contains("同期")) -> "再試行" to onRefresh
+        !message.contains("未設定") && listOf("Supabase", "同期", "データベース", "インターネット", "接続").any { message.contains(it) } ->
+            "再試行" to onRefresh
         else -> null
     }
     val refreshWithFeedback: () -> Unit = {
@@ -283,6 +302,7 @@ fun NearbyScreen(
             ScreenHeader(
                 eyebrow = "HELP RADAR",
                 title = "近くのヘルプ",
+                modifier = Modifier.scrollParallax { if (listState.firstVisibleItemIndex == 0) listState.firstVisibleItemScrollOffset.toFloat() else 10_000f },
                 trailing = { SyncButton(state.syncing, onRefresh) },
             )
         }
@@ -301,6 +321,10 @@ fun NearbyScreen(
                     onOpen = {
                         haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
                         openProfile = device.match
+                    },
+                    onFind = {
+                        haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+                        finding = device.match
                     },
                     modifier = Modifier
                         .springItem(this)
@@ -339,7 +363,7 @@ fun NearbyScreen(
     openProfile?.let { profile ->
         ModalBottomSheet(
             onDismissRequest = { openProfile = null },
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            sheetState = rememberBottomSheetState(SheetValue.Hidden, setOf(SheetValue.Hidden, SheetValue.Expanded)),
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ) {
             // 内容が画面より長くても最後まで読めるよう、シート内をスクロール可能にする
@@ -353,9 +377,24 @@ fun NearbyScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 ProfileHeader(profile = profile, caption = "近くにいる支援が必要な方", modifier = Modifier.appear(0))
-                ProfileDetails(profile, startIndex = 1)
+                // 電波を受信している方なら「探す」で近づいて探せる
+                val receiving = state.devices.any { it.match?.id == profile.id }
+                ProfileDetails(
+                    profile,
+                    startIndex = 1,
+                    onFind = if (receiving) ({ finding = profile }) else null,
+                )
             }
         }
+    }
+
+    finding?.let { profile ->
+        LaunchedEffect(profile.id) { if (!state.scanning) onStart() }
+        FinderDialog(
+            profile = profile,
+            device = state.devices.firstOrNull { it.match?.id == profile.id },
+            onClose = { finding = null },
+        )
     }
 }
 
@@ -372,43 +411,50 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedStagger(
 }
 
 @Composable
-fun ScreenHeader(eyebrow: String, title: String, trailing: @Composable () -> Unit = {}) {
-    Row(
-        Modifier
+fun ScreenHeader(
+    eyebrow: String,
+    title: String,
+    modifier: Modifier = Modifier,
+    trailing: @Composable () -> Unit = {},
+) {
+    // 1 段目：ロゴと操作ボタン、2 段目：大きな見出し（ボタンが増えても見出しが折り返さない）
+    Column(
+        modifier
             .fillMaxWidth()
-            .padding(top = 8.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(top = 4.dp, bottom = 4.dp),
     ) {
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                AppLogo(size = 26.dp)
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    eyebrow,
-                    style = MaterialTheme.typography.labelMedium,
-                    letterSpacing = 1.6.sp,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-            AnimatedContent(
-                targetState = title,
-                transitionSpec = {
-                    (slideInVertically(Springs.bouncy()) { it / 2 } + fadeIn())
-                        .togetherWith(slideOutVertically { -it / 2 } + fadeOut())
-                },
-                label = "title",
-            ) { t ->
-                Text(
-                    t,
-                    style = MaterialTheme.typography.displaySmall,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.semantics { heading() },
-                )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            AppLogo(size = 26.dp)
+            Spacer(Modifier.width(10.dp))
+            Text(
+                eyebrow,
+                style = MaterialTheme.typography.labelMedium,
+                letterSpacing = 1.6.sp,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AccountButton()
+                SettingsButton()
+                trailing()
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SettingsButton()
-            trailing()
+        AnimatedContent(
+            targetState = title,
+            transitionSpec = {
+                (slideInVertically(Springs.bouncy()) { it / 2 } + fadeIn())
+                    .togetherWith(slideOutVertically { -it / 2 } + fadeOut())
+            },
+            label = "title",
+        ) { t ->
+            Text(
+                t,
+                style = MaterialTheme.typography.displaySmall,
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.semantics { heading() },
+            )
         }
     }
 }
@@ -443,28 +489,54 @@ private fun ScanHero(state: NearbyState, onToggle: () -> Unit, modifier: Modifie
         else -> RadarMode.Idle
     }
     val cs = MaterialTheme.colorScheme
-    val container by animateColorAsState(if (alert) HelpRed else cs.surfaceContainerLow, Springs.smooth(), label = "c")
+    val base = cs.surfaceContainerLow
+    val reduceMotion = LocalReduceMotion.current
+    // 一致したらレーダーの中心から赤がインクのように広がってパネルを満たす（離れたら縮んで戻る）
+    val reveal = remember { Animatable(if (alert) 1f else 0f) }
+    LaunchedEffect(alert, reduceMotion) {
+        val target = if (alert) 1f else 0f
+        if (reduceMotion) {
+            reveal.snapTo(target)
+        } else if (alert) {
+            reveal.animateTo(target, spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessVeryLow))
+        } else {
+            reveal.animateTo(target, tween(520, easing = FastOutSlowInEasing))
+        }
+    }
+    var heroOrigin by remember { mutableStateOf(Offset.Zero) }
+    var radarCenter by remember { mutableStateOf(Offset.Unspecified) }
     val deco by animateColorAsState(if (alert) Color.White.copy(alpha = 0.12f) else cs.primaryContainer, label = "d")
     val deco2 by animateColorAsState(if (alert) Color.White.copy(alpha = 0.08f) else cs.tertiaryContainer, label = "d2")
     val text by animateColorAsState(if (alert) Color.White else cs.onSurface, label = "t")
-    val sub by animateColorAsState(if (alert) Color.White.copy(alpha = 0.85f) else cs.onSurfaceVariant, label = "s")
 
     val headline = when (mode) {
         RadarMode.Alert -> "支援が必要な方が\n近くに ${state.matches.size} 人います"
-        RadarMode.Scanning -> "周辺をさがしています"
-        RadarMode.Idle -> "スキャンを開始しましょう"
-    }
-    val body = when (mode) {
-        RadarMode.Alert -> "下のカードをタップすると、お手伝いの内容が見られます"
-        RadarMode.Scanning -> "登録された BLE タグが見つかると赤くお知らせします"
-        RadarMode.Idle -> "Bluetooth で近くのヘルプタグを探します"
+        RadarMode.Scanning -> "さがしています"
+        RadarMode.Idle -> "待機中"
     }
 
     Box(
         modifier
             .fillMaxWidth()
+            .onGloballyPositioned { heroOrigin = it.positionInRoot() }
             .clip(MaterialTheme.shapes.extraLarge)
-            .background(container)
+            .drawBehind {
+                drawRect(base)
+                val p = reveal.value
+                if (p <= 0f) return@drawBehind
+                val c = if (radarCenter.isSpecified) radarCenter - heroOrigin else Offset(size.width / 2, size.height * 0.3f)
+                val maxR = hypot(maxOf(c.x, size.width - c.x), maxOf(c.y, size.height - c.y))
+                drawCircle(HelpRed, radius = maxR * p, center = c)
+                // 広がる先端に白い波紋を重ねて「波が走る」感じを出す
+                if (p < 1f) {
+                    drawCircle(
+                        Color.White.copy(alpha = 0.45f * (1f - p)),
+                        radius = maxR * p,
+                        center = c,
+                        style = Stroke(10.dp.toPx() * (1f - p) + 1f),
+                    )
+                }
+            }
     ) {
         // 大きな形がゆっくり回る装飾
         SpinningShape(
@@ -506,6 +578,9 @@ private fun ScanHero(state: NearbyState, onToggle: () -> Unit, modifier: Modifie
                 )
             }
             ExpressiveRadar(
+                modifier = Modifier.onGloballyPositioned { c ->
+                    radarCenter = c.positionInRoot() + Offset(c.size.width / 2f, c.size.height / 2f)
+                },
                 mode = mode,
                 icon = if (state.scanning) Icons.AutoMirrored.Rounded.BluetoothSearching else Icons.Rounded.Radar,
                 ringColor = if (alert) Color.White else HelpRed,
@@ -524,10 +599,6 @@ private fun ScanHero(state: NearbyState, onToggle: () -> Unit, modifier: Modifie
                 label = "headline",
             ) { h ->
                 Text(h, color = text, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
-            }
-            Spacer(Modifier.size(6.dp))
-            AnimatedContent(targetState = body, label = "body") { b ->
-                Text(b, color = sub, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
             }
             Spacer(Modifier.size(14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -638,7 +709,7 @@ private fun SectionLabel(text: String, count: Int, color: Color, modifier: Modif
 
 /** BLE と DB が一致した端末：赤いカードが鼓動する */
 @Composable
-private fun MatchCard(device: NearbyDevice, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+private fun MatchCard(device: NearbyDevice, onOpen: () -> Unit, onFind: () -> Unit, modifier: Modifier = Modifier) {
     val profile = device.match ?: return
     val pulse = rememberInfiniteTransition(label = "match")
     val glow = pulse.animateFloat(
@@ -656,6 +727,17 @@ private fun MatchCard(device: NearbyDevice, onOpen: () -> Unit, modifier: Modifi
         label = "matchFade",
     )
 
+    val sheen = remember { Animatable(0f) }
+    LaunchedEffect(reduceMotion) {
+        if (reduceMotion) return@LaunchedEffect
+        delay(350)
+        while (true) {
+            sheen.snapTo(0f)
+            sheen.animateTo(1f, tween(1100, easing = FastOutSlowInEasing))
+            delay(5200)
+        }
+    }
+
     Box(
         modifier
             .graphicsLayer { alpha = fadeAlpha }
@@ -666,6 +748,21 @@ private fun MatchCard(device: NearbyDevice, onOpen: () -> Unit, modifier: Modifi
             // 光る縁は描画フェーズで読む（カード全体を毎フレーム再コンポーズしない）
             .drawWithContent {
                 drawContent()
+                // 光の帯が斜めにすっと走る（見つかった瞬間と、その後ときどき）
+                val v = sheen.value
+                if (v > 0f && v < 1f) {
+                    val w = size.width
+                    val x = -w * 0.6f + (w * 2.2f) * v
+                    drawRect(
+                        Brush.linearGradient(
+                            0f to Color.Transparent,
+                            0.5f to Color.White.copy(alpha = 0.32f),
+                            1f to Color.Transparent,
+                            start = Offset(x - w * 0.25f, 0f),
+                            end = Offset(x + w * 0.25f, size.height * 0.6f),
+                        ),
+                    )
+                }
                 drawOutline(
                     shape.createOutline(size, layoutDirection, this),
                     HelpRedGlow.copy(alpha = if (reduceMotion) 0.8f else glow.value),
@@ -682,6 +779,7 @@ private fun MatchCard(device: NearbyDevice, onOpen: () -> Unit, modifier: Modifi
             .clearAndSetSemantics {
                 contentDescription = "支援が必要な方、${profile.displayName}さん。${distanceLabel(device.rssi)}。" +
                     (profile.helpRequest?.let { "お願い：$it。" } ?: "") + "タップで詳細"
+                customActions = listOf(CustomAccessibilityAction("近づいて探す") { onFind(); true })
             }
     ) {
         SpinningShape(
@@ -732,21 +830,39 @@ private fun MatchCard(device: NearbyDevice, onOpen: () -> Unit, modifier: Modifi
                 )
             }
             Spacer(Modifier.size(16.dp))
-            Row(
-                Modifier
-                    .clip(CircleShape)
-                    .background(Color.White)
-                    .padding(horizontal = 18.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("詳細を見る", color = HelpRedDeep, style = MaterialTheme.typography.labelLarge)
-                Spacer(Modifier.width(6.dp))
-                Icon(
-                    Icons.AutoMirrored.Rounded.ArrowForward,
-                    contentDescription = null,
-                    tint = HelpRedDeep,
-                    modifier = Modifier.size(18.dp),
-                )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    Modifier
+                        .clip(CircleShape)
+                        .background(Color.White)
+                        .padding(horizontal = 18.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("詳細を見る", color = HelpRedDeep, style = MaterialTheme.typography.labelLarge)
+                    Spacer(Modifier.width(6.dp))
+                    Icon(
+                        Icons.AutoMirrored.Rounded.ArrowForward,
+                        contentDescription = null,
+                        tint = HelpRedDeep,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                // 「探す」は別ボタン：押すと近づいて探す画面へ（押すと少し縮んで弾む）
+                val findSource = remember { MutableInteractionSource() }
+                Row(
+                    Modifier
+                        .pressScale(findSource, 0.9f)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.22f))
+                        .clickable(findSource, androidx.compose.foundation.LocalIndication.current, role = Role.Button, onClickLabel = "近づいて探す", onClick = onFind)
+                        .heightIn(min = 44.dp)
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Rounded.NearMe, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("探す", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                }
             }
         }
     }
@@ -902,7 +1018,7 @@ private fun EmptyHint(modifier: Modifier = Modifier) {
         LoadingIndicator(Modifier.size(72.dp), color = HelpRed)
         Spacer(Modifier.size(12.dp))
         Text(
-            "まだデバイスが見つかっていません",
+            "まだ見つかっていません",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -914,4 +1030,19 @@ private fun signalStatus(device: NearbyDevice): String = when (device.fade) {
     0 -> distanceLabel(device.rssi)
     1 -> "受信待ち…"
     else -> "電波が途切れています"
+}
+
+/**
+ * スクロールに合わせて見出しが少し遅れて動き（パララックス）、薄く小さくなって消えていく。
+ * スクロール量は描画時にだけ読むので、再コンポーズは起きない。
+ */
+fun Modifier.scrollParallax(offset: () -> Float): Modifier = graphicsLayer {
+    val o = offset()
+    val fade = 260.dp.toPx()
+    translationY = o * 0.45f
+    alpha = (1f - o / fade).coerceIn(0f, 1f)
+    val s = 1f - (o / fade).coerceIn(0f, 1f) * 0.08f
+    scaleX = s
+    scaleY = s
+    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
 }

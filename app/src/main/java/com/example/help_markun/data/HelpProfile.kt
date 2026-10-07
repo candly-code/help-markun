@@ -17,6 +17,8 @@ data class HelpProfile(
     val medicalNotes: String?,
     val emergencyContactName: String?,
     val emergencyContactPhone: String?,
+    /** 見守っている家族グループ（登録されていれば「家族に知らせる」が使える） */
+    val familyId: String? = null,
 ) {
     /** アバター表示用のイニシャル（1〜2 文字） */
     val initials: String
@@ -37,6 +39,7 @@ data class HelpProfile(
             medicalNotes = json.optNullableString("medical_notes"),
             emergencyContactName = json.optNullableString("emergency_contact_name"),
             emergencyContactPhone = json.optNullableString("emergency_contact_phone"),
+            familyId = json.optNullableString("family_id"),
         )
     }
 }

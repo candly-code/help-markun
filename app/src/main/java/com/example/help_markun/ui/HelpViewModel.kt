@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.help_markun.data.FamilyEventKind
 import com.example.help_markun.data.HelpProfile
 import com.example.help_markun.data.SupabaseRepository
 import com.example.help_markun.data.normalizeKey
@@ -11,6 +12,7 @@ import com.example.help_markun.hardware.BleScanner
 import com.example.help_markun.hardware.CardInfo
 import com.example.help_markun.hardware.Haptics
 import com.example.help_markun.hardware.NfcStatus
+import com.example.help_markun.service.FamilyNotifier
 import com.example.help_markun.ui.components.signalLevel
 import com.example.help_markun.ui.theme.AppSettings
 import kotlinx.coroutines.Job
@@ -94,6 +96,7 @@ class HelpViewModel(app: Application) : AndroidViewModel(app) {
             .putInt("fade_out_seconds", s.fadeOutSeconds)
             .putBoolean("hide_far", s.hideFarDevices)
             .putBoolean("background_watch", s.backgroundWatch)
+            .putBoolean(FamilyNotifier.KEY_AUTO_REPORT, s.familyAutoReport)
             .apply()
         publish()
     }
@@ -109,6 +112,7 @@ class HelpViewModel(app: Application) : AndroidViewModel(app) {
             fadeOutSeconds = prefs.getInt("fade_out_seconds", d.fadeOutSeconds),
             hideFarDevices = prefs.getBoolean("hide_far", d.hideFarDevices),
             backgroundWatch = prefs.getBoolean("background_watch", d.backgroundWatch),
+            familyAutoReport = prefs.getBoolean(FamilyNotifier.KEY_AUTO_REPORT, d.familyAutoReport),
         )
     }
 
@@ -260,7 +264,11 @@ class HelpViewModel(app: Application) : AndroidViewModel(app) {
                 CardState.Result(card, profile = null, lookupNote = "データベース未設定のため、カードの情報のみ表示しています")
             } else {
                 runCatching { repository.fetchByCardId(card.id) }.fold(
-                    onSuccess = { p -> CardState.Result(card, p, lookupNote = null) },
+                    onSuccess = { p ->
+                        // ご家族が登録されている方なら、カードが読まれたことを知らせる
+                        p?.let { launch { FamilyNotifier.reportFound(getApplication(), it, FamilyEventKind.Card) } }
+                        CardState.Result(card, p, lookupNote = null)
+                    },
                     onFailure = { e -> CardState.Result(card, null, lookupNote = e.message ?: "照合に失敗しました") },
                 )
             }
@@ -296,6 +304,10 @@ class HelpViewModel(app: Application) : AndroidViewModel(app) {
         if (newMatches.isNotEmpty()) {
             alerted += newMatches.map { it.address }
             if (_settings.value.alertVibration) haptics.alert()
+            // ご家族が登録されている方なら、近くで見つかったことを知らせる
+            newMatches.mapNotNull { it.match }.forEach { p ->
+                viewModelScope.launch { FamilyNotifier.reportFound(getApplication(), p, FamilyEventKind.Nearby) }
+            }
         }
 
         // 電波強度で並べ替えると毎回順番が入れ替わるので、見つけた順で固定する
@@ -310,7 +322,9 @@ class HelpViewModel(app: Application) : AndroidViewModel(app) {
             val a = sorted[i]
             val b = old[i]
             a.address != b.address || a.name != b.name || a.match != b.match || a.fade != b.fade ||
-                signalLevel(a.rssi) != signalLevel(b.rssi)
+                signalLevel(a.rssi) != signalLevel(b.rssi) ||
+                // 支援が必要な方は「近づいて探す」画面のため、細かな電波の変化も伝える
+                (a.isMatch && kotlin.math.abs(a.rssi - b.rssi) >= 2)
         }
         if (changed) _nearby.update { it.copy(devices = sorted) }
     }

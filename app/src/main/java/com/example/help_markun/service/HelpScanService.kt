@@ -20,6 +20,8 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.example.help_markun.MainActivity
 import com.example.help_markun.R
+import com.example.help_markun.data.AccountStore
+import com.example.help_markun.data.FamilyEventKind
 import com.example.help_markun.data.HelpProfile
 import com.example.help_markun.data.SupabaseRepository
 import com.example.help_markun.data.normalizeKey
@@ -57,6 +59,7 @@ class HelpScanService : Service() {
     private val repository = SupabaseRepository()
     private lateinit var scanner: BleScanner
     private var loop: Job? = null
+    private var familyLoop: Job? = null
 
     /** 最後に受信した時刻（プロフィール ID → 時刻）。近くにいる方の一覧はアプリ側からも見えるよう companion に置く */
     private val lastSeen = mutableMapOf<String, Long>()
@@ -79,7 +82,9 @@ class HelpScanService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (loop?.isActive != true) loop = scope.launch { watch() }
+        if (bleGranted(this) && loop?.isActive != true) loop = scope.launch { watch() }
+        // 家族グループに入っていれば、家族へのお知らせも受け取る
+        if (familyLoop?.isActive != true) familyLoop = scope.launch { watchFamily() }
         return START_STICKY
     }
 
@@ -101,6 +106,13 @@ class HelpScanService : Service() {
         } else 0
         return runCatching { ServiceCompat.startForeground(this, ONGOING_ID, notification, withLocation) }
             .recoverCatching { ServiceCompat.startForeground(this, ONGOING_ID, notification, deviceOnly) }
+            .recoverCatching {
+                // BLE の許可がなく、家族へのお知らせだけを受け取る場合
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) throw it
+                ServiceCompat.startForeground(
+                    this, ONGOING_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING,
+                )
+            }
             .isSuccess
     }
 
@@ -142,6 +154,23 @@ class HelpScanService : Service() {
         if (isNew) {
             notifyMatch(profile)
             updateOngoing()
+            // その方にご家族が登録されていれば、近くで見つかったことを知らせる
+            scope.launch { FamilyNotifier.reportFound(this@HelpScanService, profile, FamilyEventKind.Nearby) }
+        }
+    }
+
+    /** 家族へのお知らせを定期的に確認する（アプリを開いている間は画面側で見せるので通知しない） */
+    private suspend fun watchFamily() {
+        val store = AccountStore.get(this)
+        while (scope.isActive) {
+            if (store.inFamily && store.session.value != null) {
+                FamilyNotifier.poll(this, notify = !AppVisibility.visible)
+            } else if (!bleGranted(this)) {
+                // 見守るものがなくなった（ログアウトなど）
+                stopSelf()
+                return
+            }
+            delay(FAMILY_POLL_MS)
         }
     }
 
@@ -201,8 +230,17 @@ class HelpScanService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_WATCH)
             .setSmallIcon(R.drawable.ic_stat_help)
             .setColor(ContextCompat.getColor(this, R.color.help_red))
-            .setContentTitle(if (count > 0) "近くに支援が必要な方が $count 人います" else "近くのヘルプを見守っています")
-            .setContentText("登録されたヘルプタグが近づくとお知らせします")
+            .setContentTitle(
+                when {
+                    count > 0 -> "近くに支援が必要な方が $count 人います"
+                    bleGranted(this) -> "近くのヘルプを見守っています"
+                    else -> "ご家族へのお知らせを受け取っています"
+                }
+            )
+            .setContentText(
+                if (bleGranted(this)) "登録されたヘルプタグが近づくとお知らせします"
+                else "見守っている方が見つかったときなどにお知らせします"
+            )
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
@@ -238,6 +276,7 @@ class HelpScanService : Service() {
         private const val RETRY_MS = 60_000L
         private const val PRUNE_MS = 15_000L
         private const val LOST_MS = 2 * 60_000L
+        private const val FAMILY_POLL_MS = 60_000L
 
         private val MAC = Regex("^([0-9A-F]{2}:){5}[0-9A-F]{2}$")
 
@@ -251,11 +290,19 @@ class HelpScanService : Service() {
         private fun canNotify(context: Context) =
             Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || granted(context, Manifest.permission.POST_NOTIFICATIONS)
 
-        /** 見守りを始められるか：設定がオン、BLE の権限あり、DB 接続情報あり */
+        private fun bleGranted(context: Context) = BleScanner.requiredPermissions.all { granted(context, it) }
+
+        /** 家族グループに入っていて、お知らせを受け取れる状態か */
+        private fun familyActive(context: Context): Boolean {
+            val store = AccountStore.get(context)
+            return store.inFamily && store.session.value != null
+        }
+
+        /** 見守りを始められるか：設定がオン、DB 接続情報あり、かつ BLE の権限があるか家族グループに参加中 */
         fun canRun(context: Context): Boolean =
             prefs(context).getBoolean(KEY_ENABLED, true) &&
-                BleScanner.requiredPermissions.all { granted(context, it) } &&
-                SupabaseRepository().isConfigured
+                SupabaseRepository().isConfigured &&
+                (bleGranted(context) || familyActive(context))
 
         /** 条件がそろっていれば見守りを開始する（何度呼んでもよい） */
         fun startIfAllowed(context: Context) {

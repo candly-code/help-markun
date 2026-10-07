@@ -32,6 +32,8 @@ data class AppSettings(
     val hideFarDevices: Boolean = false,
     /** アプリを閉じていても近くのヘルプタグを探し、見つけたら通知する */
     val backgroundWatch: Boolean = true,
+    /** 支援が必要な方を見つけた・カードを読んだとき、その方のご家族へ自動で知らせる */
+    val familyAutoReport: Boolean = true,
 )
 
 /** どの画面からでも設定を読み書きできるようにする */

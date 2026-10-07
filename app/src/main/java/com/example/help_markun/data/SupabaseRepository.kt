@@ -5,7 +5,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import java.io.IOException
+import java.net.ConnectException
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import javax.net.ssl.SSLException
 import java.net.URL
 import java.net.URLEncoder
 
@@ -31,7 +35,20 @@ class SupabaseRepository(
 
     private suspend fun query(params: String): List<HelpProfile> = withContext(Dispatchers.IO) {
         if (!isConfigured) throw IOException("Supabase の URL / キーが未設定です")
+        try {
+            request(params)
+        } catch (e: UnknownHostException) {
+            throw IOException("インターネットに接続できません。通信環境を確認してください", e)
+        } catch (e: SocketTimeoutException) {
+            throw IOException("データベースに接続できませんでした（時間切れ）。通信環境を確認してください", e)
+        } catch (e: ConnectException) {
+            throw IOException("データベースに接続できませんでした。通信環境を確認してください", e)
+        } catch (e: SSLException) {
+            throw IOException("安全な接続を確立できませんでした。端末の日時設定を確認してください", e)
+        }
+    }
 
+    private fun request(params: String): List<HelpProfile> {
         val conn = URL("$baseUrl/rest/v1/$TABLE?$params").openConnection() as HttpURLConnection
         try {
             conn.requestMethod = "GET"
@@ -43,12 +60,18 @@ class SupabaseRepository(
 
             val code = conn.responseCode
             if (code !in 200..299) {
-                val detail = conn.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
-                throw IOException("Supabase エラー ($code) $detail".trim())
+                throw IOException(
+                    when (code) {
+                        401, 403 -> "データベースの接続キーが正しくありません（コード $code）"
+                        404 -> "データベースに help_profiles テーブルが見つかりません（コード $code）"
+                        in 500..599 -> "データベース側で一時的なエラーが起きています（コード $code）"
+                        else -> "データベースから読み込めませんでした（コード $code）"
+                    }
+                )
             }
             val body = conn.inputStream.bufferedReader().use { it.readText() }
             val array = JSONArray(body)
-            List(array.length()) { HelpProfile.fromJson(array.getJSONObject(it)) }
+            return List(array.length()) { HelpProfile.fromJson(array.getJSONObject(it)) }
         } finally {
             conn.disconnect()
         }

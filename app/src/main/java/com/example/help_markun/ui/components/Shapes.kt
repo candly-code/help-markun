@@ -24,11 +24,11 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Matrix
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
@@ -109,6 +109,9 @@ fun SpinningShape(
 /**
  * 単位座標系のパスを、[center] を中心に一辺 [sizePx] の正方形へ収めて描く。
  * 形の外接矩形で正規化するので、どの MaterialShapes / Morph でもそのまま使える。
+ *
+ * キャンバスごと拡大すると Android 8 以前は小さく描いた形を引き伸ばすためぼやけるので、
+ * パス自体を画面の大きさに変換してから描く。
  */
 fun DrawScope.drawFitted(
     path: Path,
@@ -121,14 +124,17 @@ fun DrawScope.drawFitted(
     val b = path.getBounds()
     val dim = maxOf(b.width, b.height).takeIf { it > 0f } ?: return
     val k = sizePx / dim
-    withTransform({
+    val m = Matrix().apply {
         translate(center.x, center.y)
-        rotate(rotation, pivot = Offset.Zero)
-        scale(k, k, pivot = Offset.Zero)
+        rotateZ(rotation)
+        scale(k, k)
         translate(-(b.left + b.width / 2), -(b.top + b.height / 2))
-    }) {
-        drawPath(path, color, style = strokePx?.let { Stroke(it / k) } ?: Fill)
     }
+    val fitted = Path().apply {
+        addPath(path)
+        transform(m)
+    }
+    drawPath(fitted, color, style = strokePx?.let { Stroke(it) } ?: Fill)
 }
 
 /** ヘルプマーク風のロゴ（赤地に白の十字とハート） */

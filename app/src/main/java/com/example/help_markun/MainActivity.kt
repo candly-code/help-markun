@@ -21,10 +21,13 @@ import androidx.core.content.ContextCompat
 import com.example.help_markun.hardware.BleScanner
 import com.example.help_markun.hardware.NfcCardReader
 import com.example.help_markun.service.AppVisibility
+import com.example.help_markun.service.FamilyNotifier
 import com.example.help_markun.service.HelpScanService
+import com.example.help_markun.ui.AccountViewModel
 import com.example.help_markun.ui.AppTab
 import com.example.help_markun.ui.HelpApp
 import com.example.help_markun.ui.HelpViewModel
+import com.example.help_markun.ui.components.ThemeReveal
 import com.example.help_markun.ui.theme.Help_markunTheme
 import com.example.help_markun.ui.theme.LocalReduceMotion
 import com.example.help_markun.ui.theme.LocalSettings
@@ -44,6 +47,7 @@ private object NoHaptics : HapticFeedback {
 class MainActivity : ComponentActivity() {
 
     private val vm: HelpViewModel by viewModels()
+    private val account: AccountViewModel by viewModels()
     private lateinit var nfc: NfcCardReader
 
     // 通知の許可を求める（結果にかかわらず見守りは続け、許可されれば通知も出る）
@@ -89,8 +93,11 @@ class MainActivity : ComponentActivity() {
                 LocalDensity provides scaledDensity,
                 LocalHapticFeedback provides appHaptic,
             ) {
-                Help_markunTheme(darkTheme = dark) {
-                    HelpApp(vm)
+                // テーマの切り替えは、触れた場所から新しい色が円形に広がる
+                ThemeReveal(dark = dark, enabled = !settings.reduceMotion) { shownDark ->
+                    Help_markunTheme(darkTheme = shownDark) {
+                        HelpApp(vm, account)
+                    }
                 }
             }
         }
@@ -103,6 +110,12 @@ class MainActivity : ComponentActivity() {
 
     /** 通知から開いたときは、まずその方の詳細を出し、すぐに周囲を探し始める */
     private fun handleIntent(intent: Intent?) {
+        // ご家族へのお知らせの通知から開いたら、お知らせの一覧を出す
+        if (intent?.getBooleanExtra(FamilyNotifier.EXTRA_OPEN_FAMILY, false) == true) {
+            intent.removeExtra(FamilyNotifier.EXTRA_OPEN_FAMILY)
+            account.openSheet()
+            return
+        }
         if (intent?.getBooleanExtra(HelpScanService.EXTRA_OPEN_NEARBY, false) != true) return
         vm.selectTab(AppTab.Nearby)
         intent.getStringExtra(HelpScanService.EXTRA_PROFILE_ID)
@@ -126,6 +139,7 @@ class MainActivity : ComponentActivity() {
         HelpScanService.startIfAllowed(this)
         askNotificationPermissionOnce()
         vm.onAppVisible()
+        account.onAppVisible()
     }
 
     /**
@@ -158,6 +172,7 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         AppVisibility.visible = false
         vm.onAppHidden()
+        account.onAppHidden()
         super.onStop()
     }
 }

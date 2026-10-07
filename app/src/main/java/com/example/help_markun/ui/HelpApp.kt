@@ -1,7 +1,9 @@
 package com.example.help_markun.ui
 
 import androidx.activity.compose.PredictiveBackHandler
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
@@ -57,6 +59,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import android.os.Build
+import androidx.compose.ui.graphics.BlurEffect
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -69,6 +74,11 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.mutableStateOf
+import com.example.help_markun.data.HelpProfile
+import com.example.help_markun.ui.components.AccountSheetHost
+import com.example.help_markun.ui.components.AppIntro
+import com.example.help_markun.ui.components.FamilyContactSheet
 import com.example.help_markun.ui.components.DataStatus
 import com.example.help_markun.ui.components.LocalDataStatus
 import com.example.help_markun.ui.components.LocalSnackbar
@@ -76,6 +86,7 @@ import com.example.help_markun.ui.components.pressScale
 import com.example.help_markun.ui.screens.CardScreen
 import com.example.help_markun.ui.screens.NearbyScreen
 import com.example.help_markun.ui.theme.HelpRed
+import com.example.help_markun.ui.theme.LocalReduceMotion
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -91,7 +102,7 @@ import kotlin.math.sin
 private val PageSpring = spring<Float>(dampingRatio = 0.78f, stiffness = Spring.StiffnessMediumLow)
 
 @Composable
-fun HelpApp(vm: HelpViewModel) {
+fun HelpApp(vm: HelpViewModel, account: AccountViewModel) {
     val tab by vm.tab.collectAsStateWithLifecycle()
     val nearby by vm.nearby.collectAsStateWithLifecycle()
     val card by vm.card.collectAsStateWithLifecycle()
@@ -127,6 +138,12 @@ fun HelpApp(vm: HelpViewModel) {
     }
 
     val snackbar = remember { SnackbarHostState() }
+
+    // ご家族への連絡シート
+    var contactProfile by remember { mutableStateOf<HelpProfile?>(null) }
+    val helpActions = remember(vm) {
+        HelpActions(contactFamily = { contactProfile = it })
+    }
 
     // 戻る操作：カード結果 → 待ち受け → 近くのヘルプ の順に 1 段ずつ戻る。
     // 予測型「戻る」に対応し、端からのスワイプを始めた瞬間から画面が少し縮んで反応する
@@ -174,7 +191,10 @@ fun HelpApp(vm: HelpViewModel) {
             onSync = vm::refreshProfiles,
         ),
         LocalContentColor provides MaterialTheme.colorScheme.onBackground,
+        LocalAccount provides account,
+        LocalHelpActions provides helpActions,
     ) {
+    Box(Modifier.fillMaxSize()) {
     Column(
         Modifier
             .fillMaxSize()
@@ -240,6 +260,11 @@ fun HelpApp(vm: HelpViewModel) {
                 .padding(start = 24.dp, end = 24.dp, top = 4.dp, bottom = 12.dp),
         )
     }
+    contactProfile?.let { p -> FamilyContactSheet(p, onDismiss = { contactProfile = null }) }
+    AccountSheetHost()
+    // 起動時のイントロ（通知から開いた時は詳細をすぐ見せたいので出さない）
+    AppIntro(skip = focus != null)
+    }
     }
 }
 
@@ -251,6 +276,13 @@ private fun Modifier.pageTransition(pager: PagerState, page: Int): Modifier = gr
     scaleX = s
     scaleY = s
     alpha = 1f - 0.45f * d
+    // 離れていくページは奥へ沈みながらぼける（Android 12 以降）
+    renderEffect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && d > 0.01f) {
+        val r = d * 16.dp.toPx()
+        BlurEffect(r, r, TileMode.Decal)
+    } else {
+        null
+    }
 }
 
 private data class TabSpec(val tab: AppTab, val label: String, val icon: ImageVector)
@@ -358,6 +390,20 @@ private fun TabItem(
     val cs = MaterialTheme.colorScheme
     val fg = lerp(cs.onSurfaceVariant, Color.White, selection)
     val iconScale = 1f + 0.15f * selection
+    // 選ばれた瞬間にアイコンが小さく首を振る
+    val wiggle = remember { Animatable(0f) }
+    val reduceMotion = LocalReduceMotion.current
+    LaunchedEffect(selected) {
+        if (selected && !reduceMotion) {
+            wiggle.animateTo(0f, keyframes {
+                durationMillis = 420
+                -14f at 90
+                10f at 190
+                -5f at 290
+                0f at 420
+            })
+        }
+    }
     val source = remember { MutableInteractionSource() }
 
     Row(
@@ -385,6 +431,7 @@ private fun TabItem(
                 contentDescription = null,
                 tint = fg,
                 modifier = Modifier.graphicsLayer {
+                    rotationZ = wiggle.value
                     scaleX = iconScale
                     scaleY = iconScale
                 },

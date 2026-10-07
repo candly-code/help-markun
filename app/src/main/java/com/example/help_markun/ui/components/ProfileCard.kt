@@ -1,6 +1,9 @@
 package com.example.help_markun.ui.components
 
 import android.content.Intent
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -32,11 +35,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.heading
@@ -47,6 +52,8 @@ import androidx.core.net.toUri
 import com.example.help_markun.data.HelpProfile
 import com.example.help_markun.ui.theme.HelpRed
 import com.example.help_markun.ui.theme.HelpRedDeep
+import com.example.help_markun.ui.theme.LocalReduceMotion
+import kotlinx.coroutines.launch
 
 /** プロフィール上部：赤いコンテナ＋回る装飾＋クッキー形のアバター */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
@@ -71,10 +78,23 @@ fun ProfileHeader(
                 .offset(x = 60.dp)
                 .size(200.dp),
         )
+        // アバターは回転しながら弾んで現れる
+        val reduceMotion = LocalReduceMotion.current
+        val spin = remember { Animatable(if (reduceMotion) 0f else -160f) }
+        val pop = remember { Animatable(if (reduceMotion) 1f else 0.3f) }
+        LaunchedEffect(Unit) {
+            launch { spin.animateTo(0f, spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessLow)) }
+            pop.animateTo(1f, Springs.bouncy())
+        }
         Row(Modifier.padding(24.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier
                     .size(76.dp)
+                    .graphicsLayer {
+                        rotationZ = spin.value
+                        scaleX = pop.value
+                        scaleY = pop.value
+                    }
                     .clip(MaterialShapes.Cookie12Sided.toShape())
                     .background(Color.White),
                 contentAlignment = Alignment.Center,
@@ -99,11 +119,15 @@ fun ProfileHeader(
     }
 }
 
-/** プロフィール本文：お願いごと・特性・医療情報・緊急連絡先（順番に弾んで現れる） */
+/**
+ * プロフィール本文：手助けのボタン列・お願いごと・特性・医療情報・緊急連絡先（順番に弾んで現れる）。
+ * [onFind] を渡すと「探す」ボタンが出る（近くで電波を受信している方のみ）。
+ */
 @Composable
-fun ProfileDetails(profile: HelpProfile, modifier: Modifier = Modifier, startIndex: Int = 0) {
+fun ProfileDetails(profile: HelpProfile, modifier: Modifier = Modifier, startIndex: Int = 0, onFind: (() -> Unit)? = null) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         var i = startIndex
+        ProfileActions(profile, onFind, Modifier.appear(i++))
         profile.helpRequest?.let { HelpRequestCallout(it, Modifier.appear(i++)) }
 
         val rows = listOfNotNull(

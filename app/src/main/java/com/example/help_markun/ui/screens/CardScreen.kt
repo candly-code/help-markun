@@ -104,6 +104,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.graphics.shapes.RoundedPolygon
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.ui.draw.drawBehind
 import com.example.help_markun.hardware.CardInfo
 import com.example.help_markun.hardware.NfcStatus
 import com.example.help_markun.ui.CardState
@@ -143,7 +145,11 @@ fun CardScreen(
             .padding(top = 12.dp, bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        ScreenHeader(eyebrow = "CARD TOUCH", title = if (state is CardState.Result) "読み取り結果" else "カードで確認")
+        ScreenHeader(
+            eyebrow = "CARD TOUCH",
+            title = if (state is CardState.Result) "読み取り結果" else "カードで確認",
+            modifier = Modifier.scrollParallax { scrollState.value.toFloat() },
+        )
 
         AnimatedContent(
             targetState = state,
@@ -175,14 +181,7 @@ fun CardScreen(
 
 @Composable
 private fun TapPanel(nfcStatus: NfcStatus) {
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        TapPanelHero(nfcStatus, Modifier.appear(0))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StepTile(1, MaterialShapes.Cookie4Sided, "タッチ", Modifier.weight(1f).appear(1))
-            StepTile(2, MaterialShapes.Clover4Leaf, "読み取り", Modifier.weight(1f).appear(2))
-            StepTile(3, MaterialShapes.Sunny, "情報を表示", Modifier.weight(1f).appear(3))
-        }
-    }
+    TapPanelHero(nfcStatus, Modifier.appear(0))
 }
 
 @Composable
@@ -226,10 +225,10 @@ private fun TapPanelHero(nfcStatus: NfcStatus, modifier: Modifier = Modifier) {
             )
             Spacer(Modifier.size(8.dp))
 
-            val (title, body) = when (nfcStatus) {
-                NfcStatus.Unsupported -> "NFC に対応していません" to "この端末ではカードを読み取れません"
-                NfcStatus.Disabled -> "NFC がオフになっています" to "設定から NFC をオンにしてください"
-                NfcStatus.Ready -> "カードをタッチ" to "交通系 IC・社員証・NFC タグなど、どんなカードでも情報を表示します"
+            val title = when (nfcStatus) {
+                NfcStatus.Unsupported -> "NFC に対応していません"
+                NfcStatus.Disabled -> "NFC がオフです"
+                NfcStatus.Ready -> "カードをタッチ"
             }
             Text(
                 title,
@@ -238,8 +237,6 @@ private fun TapPanelHero(nfcStatus: NfcStatus, modifier: Modifier = Modifier) {
                 textAlign = TextAlign.Center,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
             )
-            Spacer(Modifier.size(6.dp))
-            Text(body, color = cs.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
             Spacer(Modifier.size(16.dp))
 
             when (nfcStatus) {
@@ -420,11 +417,33 @@ private fun StepTile(number: Int, polygon: RoundedPolygon, label: String, modifi
 @Composable
 private fun LoadingPanel(id: String) {
     val cs = MaterialTheme.colorScheme
+    // カードに触れた瞬間、読み取り中の印から波紋が 2 重に広がる
+    val burst = remember { Animatable(0f) }
+    val reduceMotion = LocalReduceMotion.current
+    LaunchedEffect(Unit) {
+        if (!reduceMotion) burst.animateTo(1f, tween(900, easing = FastOutSlowInEasing))
+    }
+    val ring = cs.primary
     Column(
         Modifier
             .fillMaxWidth()
             .clip(MaterialTheme.shapes.extraLarge)
             .background(cs.surfaceContainerLow)
+            .drawBehind {
+                val p = burst.value
+                if (p <= 0f || p >= 1f) return@drawBehind
+                val c = Offset(size.width / 2, 48.dp.toPx() + 60.dp.toPx())
+                val maxR = size.width * 0.75f
+                for (i in 0 until 2) {
+                    val q = (p - i * 0.18f).coerceIn(0f, 1f)
+                    drawCircle(
+                        ring.copy(alpha = 0.5f * (1f - q)),
+                        radius = maxR * q,
+                        center = c,
+                        style = Stroke(8.dp.toPx() * (1f - q) + 1f),
+                    )
+                }
+            }
             .padding(vertical = 48.dp, horizontal = 24.dp)
             .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -460,7 +479,7 @@ private fun CardResult(s: CardState.Result, onReset: () -> Unit) {
                     .semantics { liveRegion = LiveRegionMode.Assertive },
             )
             ProfileDetails(s.profile, startIndex = i)
-            i += 3
+            i += 4
         } else {
             // 未登録のカードは、読み取ったカードそのものの情報を主役にする
             DigitalCard(card, registered = false)
@@ -685,12 +704,10 @@ private fun UnregisteredNote(note: String?, modifier: Modifier = Modifier) {
         ShapeBadge(Icons.Rounded.Info, MaterialShapes.Gem, container = cs.tertiary, tint = cs.onTertiary)
         Spacer(Modifier.width(14.dp))
         Column {
-            Text("登録されていないカードです", style = MaterialTheme.typography.titleMedium, color = cs.onTertiaryContainer)
-            Text(
-                note ?: "カードから読み取れた情報を表示しています",
-                style = MaterialTheme.typography.bodyMedium,
-                color = cs.onTertiaryContainer,
-            )
+            Text("未登録のカード", style = MaterialTheme.typography.titleMedium, color = cs.onTertiaryContainer)
+            note?.let {
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = cs.onTertiaryContainer)
+            }
         }
     }
 }

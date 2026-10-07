@@ -16,9 +16,8 @@ val localProps = Properties().apply {
 android {
     namespace = "com.example.help_markun"
     compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
+        // 最新ライブラリの要件でビルドは SDK 37。動作する端末の下限は minSdk（Android 7.0）で別に決まる
+        version = release(37)
     }
 
     defaultConfig {
@@ -55,10 +54,6 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
-    }
-    lint {
-        // SDK 36 で使える版に固定しているので、Android Studio の「新しい版に上げる」提案を出さない
-        disable += setOf("GradleDependency", "NewerVersionAvailable", "AndroidGradlePluginVersion")
     }
 }
 

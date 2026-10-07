@@ -5,6 +5,9 @@
 - **近くのヘルプ**：BLE タグを探し、Supabase に登録された方が近くにいると赤くお知らせします。アプリを閉じていてもバックグラウンドで見守り、見つけたら通知とアイコンのバッジで知らせます。
 - **カードで確認**：FeliCa・NFC カードをスマホにタッチすると、登録された方の情報（お手伝いしてほしいこと・医療情報・緊急連絡先）を表示します。未登録のカードでも、カードの種類や ID を表示します。
 
+- **アカウントと家族**：ログインなしでもすべて使えます。ログインして家族グループ（招待コードで参加）を作ると、見守っている方が近くで見つかった・カードが読まれた・手助けした人から連絡があったときに、家族全員へ通知が届きます。
+- **手助けの道具**：読み上げ・筆談ボード・近づいて探す（電波の強さで距離を知らせる）。
+
 Jetpack Compose と Material 3 Expressive で作っています（ライト／ダーク、文字サイズ、動きを控えめにする設定などに対応）。
 
 ## 必要なもの
@@ -17,7 +20,9 @@ Jetpack Compose と Material 3 Expressive で作っています（ライト／�
 
 ### 1. データベースを用意する
 
-Supabase の **SQL Editor** で [`supabase/schema.sql`](supabase/schema.sql) の中身を貼り付けて実行します。`help_profiles` テーブルと、サンプルの 1 人分のデータができます。
+Supabase の **SQL Editor** で [`supabase/schema.sql`](supabase/schema.sql) の中身を貼り付けて実行します。`help_profiles` テーブルと、サンプルの 1 人分のデータができます。続けて [`supabase/family.sql`](supabase/family.sql) も実行すると、アカウント・家族機能が使えるようになります。
+
+すぐにログインできるようにするには、**Authentication → Sign In / Providers → Email** の **Confirm email** をオフにします（オンのままなら、登録後に届くメールのリンクを開いてからログインします）。
 
 ### 2. Android Studio でプロジェクトを開く
 
@@ -75,6 +80,7 @@ Windows の PowerShell では `.\gradlew.bat :app:installRelease` です。
 | `ble_id` | BLE タグのアドレス（`AA:BB:CC:DD:EE:FF` 形式。バックグラウンド見守りはこの形式のみ対応） |
 | `help_request` | お手伝いしてほしいこと |
 | `emergency_contact_name` / `emergency_contact_phone` | 緊急連絡先 |
+| `family_id` | 見守る家族グループ（`families.id`）。**管理者がダッシュボードで設定します**。カードを読んでアプリから追加することはできません |
 
 ## 注意
 

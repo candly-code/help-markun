@@ -22,11 +22,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.BlurEffect
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import com.example.help_markun.ui.theme.LocalReduceMotion
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import android.os.Build
 
 /** アプリ全体で使うスプリング。Expressive らしく少し弾ませる */
 object Springs {
@@ -56,24 +61,40 @@ fun Modifier.pressScale(source: InteractionSource, pressedScale: Float = 0.94f):
 }
 
 /**
- * 表示時に下からふわっと弾みながら現れる。[index] ごとに少し遅らせて順番に出す。
+ * 表示時に、奥からふわっと浮かび上がって現れる。[index] ごとに少し遅らせて順番に出す。
+ * - 下から弾みながら上がり、手前に傾きながら起き上がる（奥行き）
+ * - Android 12 以降は、ぼかしから徐々にピントが合う
  * [key] が変わると再生し直す。
  */
 @Composable
 fun Modifier.appear(index: Int = 0, key: Any? = Unit): Modifier {
     if (LocalReduceMotion.current) return this
     val p = remember(key) { Animatable(0f) }
+    val focus = remember(key) { Animatable(0f) }
     LaunchedEffect(key) {
-        delay(index * 70L)
-        p.animateTo(1f, spring(dampingRatio = 0.62f, stiffness = Spring.StiffnessLow))
+        delay(index * 60L)
+        launch { focus.animateTo(1f, tween(420, easing = FastOutSlowInEasing)) }
+        p.animateTo(1f, spring(dampingRatio = 0.66f, stiffness = Spring.StiffnessLow))
     }
     return graphicsLayer {
         val v = p.value
-        alpha = v.coerceIn(0f, 1f)
-        translationY = (1f - v) * 48.dp.toPx()
-        val s = 0.9f + 0.1f * v
+        val f = focus.value
+        alpha = f
+        translationY = (1f - v) * 56.dp.toPx()
+        val s = 0.92f + 0.08f * v
         scaleX = s
         scaleY = s
+        // 手前に倒れていたカードが起き上がる
+        rotationX = (1f - v) * 14f
+        cameraDistance = 16f * density
+        transformOrigin = TransformOrigin(0.5f, 0f)
+        // ぼかし → くっきり（描き終わったら外して負荷をなくす）
+        renderEffect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && f < 1f) {
+            val r = (1f - f) * 14.dp.toPx()
+            if (r > 0.5f) BlurEffect(r, r, TileMode.Decal) else null
+        } else {
+            null
+        }
     }
 }
 
